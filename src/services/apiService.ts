@@ -24,10 +24,17 @@ export interface Provider {
 
 export interface StreamUpdate {
   message: string
-  type: 'progress' | 'command' | 'file' | 'error' | 'iteration_update' | 'command_executed' | 'file_created' | 'server_started' | 'ai_thinking'
+  content?: string
+  type: 'progress' | 'command' | 'file' | 'error' | 'iteration_update' | 'command_executed' | 'file_created' | 'server_started' | 'ai_thinking' | 'ai_response' | 'message'
   iteration?: number
   reasoning?: string
   expectation?: string
+  filename?: string
+  filepath?: string
+  nextCommand?: {
+    type: string
+    message: string
+  }
 }
 
 export class ApiService {

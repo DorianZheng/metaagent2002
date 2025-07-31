@@ -763,7 +763,7 @@ async function executeIterativeCommand(command, projectId, sendMessage) {
 
     } else if (command.type === 'message') {
       const messageData = {
-        type: 'ai_message',
+        type: 'ai_response',
         content: command.message,
         timestamp: new Date().toISOString(),
         messageType: command.messageType || 'info',
