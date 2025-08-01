@@ -506,7 +506,7 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
   let serverInfo = null;
   let input = initialInput;
   let iterationCount = 0;
-  const maxIterations = 20; // Safety limit
+  const maxIterations = 100; // Safety limit
   const results = [];
   // Build messages array for proper conversation handling
   const messages = [
@@ -533,13 +533,12 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
     try {
       console.log(`📨 Sending ${messages.length} messages to AI:`);
       messages.forEach((msg, i) => {
-        const preview = msg.content.substring(0, 100) + (msg.content.length > 100 ? `...${msg.content.slice(-100)}` : '');
+        const preview = msg.content.substring(0, 100) + (msg.content.length > 100 ? `\n...\n${msg.content.slice(-100)}` : '');
         console.log(`   ${i + 1}. ${msg.role}: ${preview}`);
       });
 
       // Build context prompt from conversation history
       const contextPrompt = messages.map(m => `${m.role}: ${m.content}`).join('\n\n') + '\n\nPlease respond with the next command to execute in JSON format.';
-      
       // Use simple prompt to avoid AI SDK _def error
       const result = await generateText({
         model: modelInstance,
@@ -602,13 +601,17 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
         }
         
         aiResponse = JSON.parse(jsonText);
-        console.log(`🤖 AI reasoning: ${aiResponse.reasoning}`);
-        console.log(`🎯 AI expectation: ${aiResponse.expectation}`);
       } catch (parseError) {
-        console.log(`❌ Failed to parse JSON response from AI`);
-        console.log(`📄 Raw response: ${result.text.substring(0, 500)}...`);
-        console.log(`🔍 Attempted to parse: ${jsonText ? jsonText.substring(0, 200) + '...' : 'No JSON text extracted'}`);
-        throw new Error(`AI response is not valid JSON: ${parseError.message}`);
+        console.error(`❌ Failed to parse JSON response from AI. Raw response: ${result.text}`);
+        messages.push({
+          role: 'assistant',
+          content: result.text
+        });
+        messages.push({
+          role: 'user',
+          content: `AI response is not valid JSON: ${parseError.message}. Please try again.`
+        });
+        continue;
       }
 
       if (!aiResponse.nextCommand) {
@@ -632,7 +635,6 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
       // Execute the command
       console.log(`📋 About to execute command with projectId: ${projectId}`);
       console.log(`📋 Command to execute:`, JSON.stringify(aiResponse.nextCommand, null, 2));
-      
       let executionResult;
       try {
         executionResult = await executeIterativeCommand(aiResponse.nextCommand, projectId, sendMessage);
@@ -653,7 +655,6 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
         role: 'user',
         content: `COMMAND RESULT: ${toolResultContent}`
       });
-
 
       // Check if AI says we're complete
       if (aiResponse.isComplete || !aiResponse.continueAfter) {
@@ -969,8 +970,8 @@ app.post('/api/generate/stream', async (req, res) => {
     'X-Accel-Buffering': 'no' // Disable nginx buffering
   });
 
-  // Set connection timeout to 20 minutes
-  res.setTimeout(1200000);
+  // Set connection timeout to 200 minutes
+  res.setTimeout(12000000);
 
   // Keep connection alive with periodic heartbeat
   const heartbeat = setInterval(() => {
