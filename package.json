@@ -9,7 +9,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "server": "node server.js",
-    "start": "concurrently \"npm run server\" \"npm run dev\""
+    "start": "concurrently \"npm run server\" \"npm run dev\"",
+    "build:prod": "tsc -b && vite build",
+    "start:prod": "npm run build:prod && node server.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",

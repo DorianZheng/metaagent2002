@@ -13,7 +13,7 @@ import { google } from '@ai-sdk/google';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 const execAsync = promisify(exec);
 
 // AI workspace directory
@@ -21,6 +21,88 @@ const AI_WORKSPACE = path.join(process.cwd(), 'ai-workspace');
 
 // In-memory conversation storage (keyed by session ID)
 const conversations = new Map();
+
+// Session storage directory
+const SESSIONS_DIR = path.join(process.cwd(), 'sessions');
+
+// Initialize sessions directory
+function initializeSessionsDirectory() {
+  if (!fs.existsSync(SESSIONS_DIR)) {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    console.log(`📁 Created sessions directory: ${SESSIONS_DIR}`);
+  }
+}
+
+// Save session to file
+function saveSession(sessionId, sessionData) {
+  try {
+    const sessionFile = path.join(SESSIONS_DIR, `${sessionId}.json`);
+    const dataToSave = {
+      sessionId,
+      createdAt: sessionData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      title: sessionData.title || `Session ${sessionId.split('_')[1]}`,
+      messages: sessionData.messages || [],
+      projectFiles: sessionData.projectFiles || [],
+      serverInfo: sessionData.serverInfo || null,
+      iterations: sessionData.iterations || 0
+    };
+    
+    fs.writeFileSync(sessionFile, JSON.stringify(dataToSave, null, 2));
+    console.log(`💾 Saved session: ${sessionId}`);
+  } catch (error) {
+    console.error(`❌ Failed to save session ${sessionId}:`, error);
+  }
+}
+
+// Load session from file
+function loadSession(sessionId) {
+  try {
+    const sessionFile = path.join(SESSIONS_DIR, `${sessionId}.json`);
+    if (fs.existsSync(sessionFile)) {
+      const data = fs.readFileSync(sessionFile, 'utf8');
+      const sessionData = JSON.parse(data);
+      console.log(`📂 Loaded session: ${sessionId}`);
+      return sessionData;
+    }
+  } catch (error) {
+    console.error(`❌ Failed to load session ${sessionId}:`, error);
+  }
+  return null;
+}
+
+// List all sessions
+function listSessions() {
+  try {
+    const sessionFiles = fs.readdirSync(SESSIONS_DIR).filter(file => file.endsWith('.json'));
+    const sessions = [];
+    
+    for (const file of sessionFiles) {
+      try {
+        const data = fs.readFileSync(path.join(SESSIONS_DIR, file), 'utf8');
+        const sessionData = JSON.parse(data);
+        sessions.push({
+          sessionId: sessionData.sessionId,
+          title: sessionData.title,
+          createdAt: sessionData.createdAt,
+          updatedAt: sessionData.updatedAt,
+          messageCount: sessionData.messages ? sessionData.messages.length : 0,
+          fileCount: sessionData.projectFiles ? sessionData.projectFiles.length : 0,
+          hasServer: !!sessionData.serverInfo
+        });
+      } catch (error) {
+        console.error(`❌ Failed to read session file ${file}:`, error);
+      }
+    }
+    
+    // Sort by updatedAt descending (most recent first)
+    sessions.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    return sessions;
+  } catch (error) {
+    console.error('❌ Failed to list sessions:', error);
+    return [];
+  }
+}
 
 // Server configuration with file persistence
 const CONFIG_FILE = './server-config.json';
@@ -512,9 +594,27 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT }
   ];
-  // Add conversation history
+  // Add conversation history - check file storage first, then parameter
+  let loadedHistory = [];
+  
   if (conversationHistory.length > 0) {
-    messages.push(...conversationHistory);
+    loadedHistory = conversationHistory;
+    console.log(`Using provided conversation history with length: ${conversationHistory.length}`);
+  } else {
+    // Try to load from file storage
+    const savedSession = loadSession(projectId);
+    if (savedSession && savedSession.messages) {
+      loadedHistory = savedSession.messages;
+      // Also store in memory for faster access
+      conversations.set(projectId, savedSession);
+      console.log(`Loaded conversation history from file for session ID: ${projectId} with length: ${loadedHistory.length}`);
+    } else {
+      console.log(`Starting new conversation for session ID: ${projectId}`);
+    }
+  }
+  
+  if (loadedHistory.length > 0) {
+    messages.push(...loadedHistory);
   }
   // Add current input as user message
   if (input) {
@@ -687,6 +787,20 @@ async function generateWithIterativeAI(providerId, model, initialInput, conversa
   }
 
   console.log(`🎉 Iterative development completed in ${iterationCount} iterations`);
+  
+  // Save session data to file
+  const projectFiles = getProjectFiles(projectId);
+  const sessionData = {
+    createdAt: conversations.get(projectId)?.createdAt || new Date().toISOString(),
+    messages: messages.slice(1), // Exclude system prompt
+    projectFiles: projectFiles.files || [],
+    serverInfo: serverInfo,
+    iterations: iterationCount
+  };
+  
+  // Store in memory and save to file
+  conversations.set(projectId, sessionData);
+  saveSession(projectId, sessionData);
   
   return {
     results,
@@ -1073,9 +1187,21 @@ app.post('/api/generate/stream', async (req, res) => {
 // Serve AI workspace files
 app.use('/workspace', express.static(AI_WORKSPACE));
 
+// Serve static files from the React app build directory
+app.use(express.static(path.join(process.cwd(), 'dist')));
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Catch all handler: send back React's index.html file for any non-API routes
+app.get('*', (req, res) => {
+  // Don't serve index.html for API routes
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
 });
 
 // Cleanup running servers on shutdown
@@ -1113,11 +1239,88 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+// Session management endpoints
+app.get('/api/sessions', (req, res) => {
+  try {
+    const sessions = listSessions();
+    res.json(sessions);
+  } catch (error) {
+    console.error('Error listing sessions:', error);
+    res.status(500).json({ error: 'Failed to list sessions' });
+  }
+});
+
+app.get('/api/sessions/:sessionId', (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const sessionData = loadSession(sessionId);
+    
+    if (!sessionData) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    
+    res.json(sessionData);
+  } catch (error) {
+    console.error('Error loading session:', error);
+    res.status(500).json({ error: 'Failed to load session' });
+  }
+});
+
+app.delete('/api/sessions/:sessionId', (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const sessionFile = path.join(SESSIONS_DIR, `${sessionId}.json`);
+    
+    if (fs.existsSync(sessionFile)) {
+      fs.unlinkSync(sessionFile);
+      conversations.delete(sessionId);
+      
+      // Also try to remove project directory
+      const projectDir = path.join(AI_WORKSPACE, sessionId);
+      if (fs.existsSync(projectDir)) {
+        fs.rmSync(projectDir, { recursive: true, force: true });
+      }
+      
+      console.log(`🗑️ Deleted session: ${sessionId}`);
+      res.json({ success: true, message: 'Session deleted successfully' });
+    } else {
+      res.status(404).json({ error: 'Session not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting session:', error);
+    res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+app.put('/api/sessions/:sessionId', (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { title } = req.body;
+    
+    const sessionData = loadSession(sessionId);
+    if (!sessionData) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    
+    if (title) {
+      sessionData.title = title;
+      sessionData.updatedAt = new Date().toISOString();
+      saveSession(sessionId, sessionData);
+    }
+    
+    res.json({ success: true, message: 'Session updated successfully' });
+  } catch (error) {
+    console.error('Error updating session:', error);
+    res.status(500).json({ error: 'Failed to update session' });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`🚀 Iterative AI Code Generator running on http://localhost:${PORT}`);
   
-  // Initialize AI workspace
+  // Initialize AI workspace and sessions directory
   initializeWorkspace();
+  initializeSessionsDirectory();
   console.log(`📁 AI Workspace: ${AI_WORKSPACE}`);
   
   console.log(`📝 Configured providers:`);

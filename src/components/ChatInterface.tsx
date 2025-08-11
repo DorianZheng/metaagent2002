@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, Settings, RefreshCw, SendHorizontal } from 'lucide-react'
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { Loader2, Settings, Plane, Menu } from 'lucide-react'
 import { ApiService } from '../services/apiService'
 import SettingsPanel from './SettingsPanel'
 import './ChatInterface.css'
@@ -16,14 +16,19 @@ interface ChatInterfaceProps {
   onServerStarted: (url: string) => void
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
+  onSessionSelect?: (sessionId: string) => void
+  onNewSession?: () => void
+  onToggleSessionList: () => void
+  currentSessionId?: string | null
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({
+const ChatInterface = forwardRef<any, ChatInterfaceProps>(({
   onCodeGenerated,
   onServerStarted,
   isLoading,
-  setIsLoading
-}) => {
+  setIsLoading,
+  onToggleSessionList
+}, ref) => {
   const [messages, setMessages] = useState<Message[]>(() => {
     return [{
       id: 'welcome',
@@ -181,7 +186,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const welcomeMessage: Message = {
         id: 'welcome-updated',
         content: hasConfiguredProvider && currentProvider
-          ? `Now using LLM model "${currentProvider.selectedModel}" from service provider "${currentProvider.name}"!`
+          ? `Now using LLM model "${(currentProvider as any).selectedModel || 'default'}" from service provider "${currentProvider.name}"!`
           : 'No LLM providers configured. Click settings to set up your preferred AI provider.',
         role: 'assistant',
         timestamp: new Date()
@@ -193,16 +198,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }
 
-  const handleResetSession = () => {
-    // Reset the session and clear messages
-    ApiService.resetSession()
-    setMessages([{
-      id: 'welcome-reset',
-      content: 'Welcome to Yet Another Vibe Coding platform built by Dorian and his intern Claude Code! Let me help to build anything.',
-      role: 'assistant',
-      timestamp: new Date()
-    }])
-  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -211,6 +206,51 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Expose methods to parent component
+  useImperativeHandle(ref, () => ({
+    loadSession: (sessionData: any) => {
+      console.log('Loading session data:', sessionData)
+      
+      // Convert session messages to our Message format
+      const sessionMessages: Message[] = []
+      
+      if (sessionData.messages) {
+        sessionData.messages.forEach((msg: any) => {
+          const messageType = msg.role === 'user' ? 'user' : 
+                            msg.role === 'assistant' ? 'assistant' : 'system'
+          
+          sessionMessages.push({
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            content: msg.content,
+            role: messageType as any,
+            timestamp: new Date(sessionData.updatedAt || Date.now())
+          })
+        })
+      }
+      
+      // Add welcome message if no messages exist
+      if (sessionMessages.length === 0) {
+        sessionMessages.push({
+          id: 'welcome-loaded',
+          content: `Welcome back! Continuing session: ${sessionData.title}`,
+          role: 'assistant',
+          timestamp: new Date()
+        })
+      }
+      
+      setMessages(sessionMessages)
+    },
+    
+    resetToNewSession: () => {
+      setMessages([{
+        id: 'welcome-new',
+        content: 'Welcome to Yet Another Vibe Coding platform built by Dorian and his intern Claude Code! Let me help to build anything.',
+        role: 'assistant',
+        timestamp: new Date()
+      }])
+    }
+  }))
 
   const getAvatarText = (role: string) => {
     switch (role) {
@@ -231,16 +271,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   return (
     <div className="chat-interface">
         <div className="chat-header">
-          <h2>Just Chat to Code!</h2>
-          <div className="header-actions">
+          <div className="header-left">
             <button 
               className="header-button"
-              onClick={handleResetSession}
-              disabled={isLoading}
+              onClick={onToggleSessionList}
             >
-              <RefreshCw size={14} />
-              New Session
+              <Menu size={14} />
+              Sessions
             </button>
+          </div>
+          <h2>Chat to Code</h2>
+          <div className="header-actions">
             <button 
               className="header-button"
               onClick={() => setShowSettings(true)}
@@ -307,7 +348,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 disabled={!inputValue.trim() || isLoading}
                 className="send-button"
               >
-                <SendHorizontal size={16} />
+                <Plane size={16} />
               </button>
             </div>
           </form>
@@ -320,6 +361,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       />
     </div>
   )
-}
+})
 
 export default ChatInterface

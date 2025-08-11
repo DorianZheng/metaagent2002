@@ -253,6 +253,74 @@ export class ApiService {
     return this.currentSessionId
   }
 
+  // Session management methods
+  static async getSessions(): Promise<any[]> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sessions`)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch sessions: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Failed to fetch sessions:', error)
+      return []
+    }
+  }
+
+  static async loadSession(sessionId: string): Promise<any | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`)
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null
+        }
+        throw new Error(`Failed to load session: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Failed to load session:', error)
+      return null
+    }
+  }
+
+  static async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+        method: 'DELETE'
+      })
+      if (!response.ok) {
+        throw new Error(`Failed to delete session: ${response.status}`)
+      }
+      return true
+    } catch (error) {
+      console.error('Failed to delete session:', error)
+      return false
+    }
+  }
+
+  static async updateSession(sessionId: string, updates: { title?: string }): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updates)
+      })
+      if (!response.ok) {
+        throw new Error(`Failed to update session: ${response.status}`)
+      }
+      return true
+    } catch (error) {
+      console.error('Failed to update session:', error)
+      return false
+    }
+  }
+
+  static setCurrentSession(sessionId: string) {
+    this.currentSessionId = sessionId
+  }
+
   private static async getFallbackCode(prompt: string): Promise<string> {
     // Fallback template generation is now handled by the server
     // This function is kept for edge cases where the server is completely unreachable
